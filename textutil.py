@@ -13,26 +13,48 @@ from jieba import analyse
 
 
 class WordUtil(object):
+    """
+    词语功能工具类
+    wu = WordUtil(stopwords_path='stopwords', extend_dic_path='extenddic', vocabulary_idf_path='vocab')
+    """
+
     def __init__(self, stopwords_path=None, extend_dic_path=None, vocabulary_idf_path=None):
+        """
+        构造函数
+        :param stopwords_path: 停用词
+        :param extend_dic_path: 自定义词典
+        :param vocabulary_idf_path: 通用词典
+        """
         if extend_dic_path is not None:
+            # 导入自定义词典
             jieba.load_userdict(extend_dic_path)
         if stopwords_path is not None:
+            # 导入停用词词典
             self._stopwords = self._read_stopwords(stopwords_path)
         else:
             self._stopwords = {}
         if vocabulary_idf_path is not None:
-            self._vocab = self._read_vocabulary(vocabulary_idf_path)
+            # 导入通用词典
+            self._vocab, self._vocab_ix = self._read_vocabulary(vocabulary_idf_path)
         else:
             self._vocab = {}
-        # 定义idf类，给出词的idf值
+        # 定义tfidf类，利用通用词典更新idf值
         self._tfidf = analyse.TFIDF(vocabulary_idf_path)
 
     @property
     def vocab(self):
+        """
+        返回通用词典
+        :return:
+        """
         return self._vocab
 
-    @classmethod
-    def _read_stopwords(cls, stopwords_path):
+    def _read_stopwords(self, stopwords_path):
+        """
+        读取停用词表
+        :param stopwords_path:
+        :return:
+        """
         stopwords = {}
         with open(stopwords_path, 'r', encoding='utf-8') as f:
             for line in f.readlines():
@@ -40,24 +62,49 @@ class WordUtil(object):
                 stopwords[line] = 1
         return stopwords
 
-    @classmethod
-    def _read_vocabulary(cls, vocabulary_path):
+    def _read_vocabulary(self, vocabulary_path):
+        """
+        读取通用词表
+        返回词表及词表索引
+        :param vocabulary_path:
+        :return:
+        """
         vocab = {}
+        vocab_index = {}
+        count = 0
         with open(vocabulary_path, 'r', encoding='utf-8') as f:
-            words = f.readlines()
-            for ww in words.strip().split():
-                vocab[ww[0]] = float(ww[1])
-        return vocab
+            for line in f:
+                line = line.strip()
+                data = line.split(' ')
+                vocab[data[0]] = float(data[1])
+                vocab_index[data[0]] = count
+                count += 1
+        # 添加<sos> <eos> 字符
+        vocab['<sos>'] = 1.0
+        vocab['<eos>'] = 1.0
+        vocab_index['<sos>'] = count
+        vocab_index['<eos>'] = count + 1
+        return vocab, vocab_index
 
     def cut(self, text):
+        """
+
+        :param text:
+        :return:
+        """
         if text is not '':
-            words = jieba.cut(text)
+            words = jieba.cut(text.lower())
             return ' '.join(words)
         return ''
 
     def cut_with_stopwords(self, text):
+        """
+        使用停用词表分词
+        :param text:
+        :return:
+        """
         if text is not '':
-            words = jieba.cut(text)
+            words = jieba.cut(text.lower())
             words_result = []
             for x in words:
                 if self._stopwords.__contains__(x):
@@ -66,29 +113,57 @@ class WordUtil(object):
             return ' '.join(words_result)
         return ''
 
-    def cut_with_stop_words_vocab(self, text):
+    def cut_with_stopwords_vocab(self, text):
+        """
+        使用词典和停用词表分词
+        :param text:
+        :return:
+        """
         if text is not '':
-            words = self.cut_with_stopwords(text)
+            words = self.cut_with_stopwords(text.lower())
+            if len(self._vocab) == 0:
+                return words
             words_result = []
             for x in words.split(' '):
-                if self._vocab.__contains__(x) and len(self._vocab) > 0:
+                if self._vocab.__contains__(x):
                     words_result.append(x)
-            if len(words_result) == 0:
-                return words
             return ' '.join(words_result)
         return ''
 
     def extract_keywords(self, text, top_k=10):
-        keywords = self._tfidf.extract_tags(self.cut_with_stopwords(text), topK=top_k)
+        """
+        抽取关键词
+        tfidf算法
+        :param text:
+        :param top_k:
+        :return:
+        """
+        keywords = self._tfidf.extract_tags(self.cut_with_stopwords_vocab(text.lower()), topK=top_k)
         return ' '.join(keywords)
 
+    def extract_keywords2id(self, text, top_k=10):
+        """
+        抽取关键词 并将关键词转换为词表中的索引id
+        :param text:
+        :param top_k:
+        :return:
+        """
+        words = self.extract_keywords(text, top_k).split(' ')
+        indexes = []
+        for word in words:
+            # len(self.vocab)代表<unknown>标记
+            ix = self._vocab_ix.get(word, len(self.vocab))
+            indexes.append(ix)
+        return indexes
 
-text = '北京时间12月19日凌晨，在万众瞩目下迎来的西班牙国家德比战中，皇马客场0：0逼平巴萨，' \
-       '派出最强阵容的两支豪门在90分钟内踢出了最无聊的一场国家德比。梅西2次射门、1次射正，' \
-       '并有46次传球。全场比赛，梅西没有破门。90分钟闷平之后的皇马也开始想念C罗，后者在北京时' \
-       '间今天凌晨对阵桑普多利亚的比赛中打入了一记不可思议的滞空头球，简直逆天。昨夜今晨，欧洲' \
-       '足坛迎来了备受瞩目的一场比赛，巴萨坐镇主场迎战皇马，双方均排出了几乎最强的阵容，梅西、' \
-       '苏亚雷斯、格列兹曼、本泽马、贝尔等群星全部登场，两队总身价超过了185亿人民币。'
-
-wu = WordUtil(stopwords_path='stopwords', extend_dic_path='extenddic')
-wu.extract_keywords(text)
+    def extract_keywords2id_with_tag(self, text, top_k=10):
+        """
+        抽取关键词 并将关键词转换为词表中的索引id 并在首尾添加<sos> <eos>
+        :param text:
+        :param top_k:
+        :return:
+        """
+        indexes = self.extract_keywords2id(text, top_k)
+        indexes.insert(0, self._vocab_ix.get('<sos>'))
+        indexes.append(self._vocab_ix.get('<eos>'))
+        return indexes
