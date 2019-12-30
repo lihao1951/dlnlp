@@ -82,26 +82,28 @@ class WordUtil(object):
         # 添加<sos> <eos> 字符
         vocab['<sos>'] = 1.0
         vocab['<eos>'] = 1.0
+        vocab['<pad>'] = 1.0
         vocab_index['<sos>'] = count
         vocab_index['<eos>'] = count + 1
+        vocab_index['<pad>'] = count + 2
         return vocab, vocab_index
 
     def cut(self, text):
         """
-
+        一般分词
         :param text:
-        :return:
+        :return: str
         """
         if text is not '':
             words = jieba.cut(text.lower())
             return ' '.join(words)
         return ''
 
-    def cut_with_stopwords(self, text):
+    def cut_use_stopwords(self, text):
         """
         使用停用词表分词
         :param text:
-        :return:
+        :return: str
         """
         if text is not '':
             words = jieba.cut(text.lower())
@@ -113,22 +115,54 @@ class WordUtil(object):
             return ' '.join(words_result)
         return ''
 
-    def cut_with_stopwords_vocab(self, text):
+    def cut_use_stopwords_vocab(self, text, top_k=None):
         """
         使用词典和停用词表分词
         :param text:
-        :return:
+        :return: str
         """
         if text is not '':
-            words = self.cut_with_stopwords(text.lower())
+            words = self.cut_use_stopwords(text.lower())
             if len(self._vocab) == 0:
+                if top_k is not None:
+                    words = words.split(' ')[:top_k]
+                    while len(words) < top_k:
+                        words.append('<pad>')
+                    return ' '.join(words)
                 return words
             words_result = []
             for x in words.split(' '):
                 if self._vocab.__contains__(x):
                     words_result.append(x)
+            if top_k is not None:
+                while len(words_result) < top_k:
+                    words_result.append('<pad>')
+                return ' '.join(words_result[:top_k])
             return ' '.join(words_result)
         return ''
+
+    def cut_words2id(self, text, top_k=None):
+        """
+        使用词典和停用词表分词,并转化为id
+        :param text:
+        :return: str
+        """
+        words = self.cut_use_stopwords_vocab(text, top_k).split(' ')
+        indexes = []
+        for word in words:
+            indexes.append(self._vocab_ix.get(word))
+        return indexes
+
+    def cut_words2id_with_tag(self, text, top_k=None):
+        """
+        使用词典和停用词表分词,并转化为id
+        :param text:
+        :return: str
+        """
+        indexes = self.cut_words2id(text, top_k)
+        indexes.insert(0, self._vocab_ix.get('<sos>'))
+        indexes.append(self._vocab_ix.get('<eos>'))
+        return indexes
 
     def extract_keywords(self, text, top_k=10):
         """
@@ -136,9 +170,11 @@ class WordUtil(object):
         tfidf算法
         :param text:
         :param top_k:
-        :return:
+        :return: str
         """
-        keywords = self._tfidf.extract_tags(self.cut_with_stopwords_vocab(text.lower()), topK=top_k)
+        keywords = self._tfidf.extract_tags(self.cut_use_stopwords_vocab(text), topK=top_k)
+        while len(keywords) < top_k:
+            keywords.append('<pad>')
         return ' '.join(keywords)
 
     def extract_keywords2id(self, text, top_k=10):
@@ -146,7 +182,7 @@ class WordUtil(object):
         抽取关键词 并将关键词转换为词表中的索引id
         :param text:
         :param top_k:
-        :return:
+        :return: list
         """
         words = self.extract_keywords(text, top_k).split(' ')
         indexes = []
@@ -161,7 +197,7 @@ class WordUtil(object):
         抽取关键词 并将关键词转换为词表中的索引id 并在首尾添加<sos> <eos>
         :param text:
         :param top_k:
-        :return:
+        :return: list
         """
         indexes = self.extract_keywords2id(text, top_k)
         indexes.insert(0, self._vocab_ix.get('<sos>'))
