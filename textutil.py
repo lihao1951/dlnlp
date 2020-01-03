@@ -8,6 +8,7 @@ Describe:
 Author : LH
 Date : 2019/12/20
 """
+import os
 import jieba
 from jieba import analyse
 
@@ -25,21 +26,26 @@ class WordUtil(object):
         :param extend_dic_path: 自定义词典
         :param vocabulary_idf_path: 通用词典
         """
+        # 定义<sos> <eos> <pad> <unk>字符
+        self.start_token = '<sos>'
+        self.end_token = '<eos>'
+        self.pad_token = '<pad>'
+        self.unknown_token = '<unk>'
         if extend_dic_path is not None:
             # 导入自定义词典
-            jieba.load_userdict(extend_dic_path)
+            jieba.load_userdict(os.path.abspath(extend_dic_path))
         if stopwords_path is not None:
             # 导入停用词词典
-            self._stopwords = self._read_stopwords(stopwords_path)
+            self._stopwords = self._read_stopwords(os.path.abspath(stopwords_path))
         else:
             self._stopwords = {}
         if vocabulary_idf_path is not None:
             # 导入通用词典
-            self._vocab, self._vocab_ix = self._read_vocabulary(vocabulary_idf_path)
+            self._vocab, self._vocab_ix = self._read_vocabulary(os.path.abspath(vocabulary_idf_path))
         else:
             self._vocab = {}
         # 定义tfidf类，利用通用词典更新idf值
-        self._tfidf = analyse.TFIDF(vocabulary_idf_path)
+        self._tfidf = analyse.TFIDF(os.path.abspath(vocabulary_idf_path))
 
     @property
     def vocab(self):
@@ -48,6 +54,22 @@ class WordUtil(object):
         :return:
         """
         return self._vocab
+
+    @property
+    def vocab_ix(self):
+        """
+        返回通用词典位置索引
+        :return:
+        """
+        return self._vocab_ix
+
+    @property
+    def vocab_size(self):
+        """
+        获取通用词典的大小
+        :return:
+        """
+        return len(self._vocab)
 
     def _read_stopwords(self, stopwords_path):
         """
@@ -79,13 +101,15 @@ class WordUtil(object):
                 vocab[data[0]] = float(data[1])
                 vocab_index[data[0]] = count
                 count += 1
-        # 添加<sos> <eos> 字符
-        vocab['<sos>'] = 1.0
-        vocab['<eos>'] = 1.0
-        vocab['<pad>'] = 1.0
-        vocab_index['<sos>'] = count
-        vocab_index['<eos>'] = count + 1
-        vocab_index['<pad>'] = count + 2
+        # 添加<sos> <eos> <pad> <unk>字符
+        vocab[self.start_token] = 1.0
+        vocab[self.end_token] = 1.0
+        vocab[self.pad_token] = 1.0
+        vocab[self.unknown_token] = 1.0
+        vocab_index[self.start_token] = count
+        vocab_index[self.end_token] = count + 1
+        vocab_index[self.pad_token] = count + 2
+        vocab_index[self.unknown_token] = count + 3
         return vocab, vocab_index
 
     def cut(self, text):
@@ -99,21 +123,38 @@ class WordUtil(object):
             return ' '.join(words)
         return ''
 
-    def cut_use_stopwords(self, text):
+    def cut_use_stopwords(self, text, top_k=None):
         """
         使用停用词表分词
         :param text:
         :return: str
         """
         if text is not '':
-            words = jieba.cut(text.lower())
+            words = self.cut(text).split(' ')
             words_result = []
-            for x in words:
-                if self._stopwords.__contains__(x):
+            for word in words:
+                if self._stopwords.__contains__(word):
                     continue
-                words_result.append(x)
+                words_result.append(word)
+            if top_k:
+                words_result = words_result[:top_k]
+                while len(words_result) < top_k:
+                    words_result.append(self.pad_token)
             return ' '.join(words_result)
         return ''
+
+    def cut_2_id(self, text, top_k=None):
+        """
+        普通分词得到词表的id
+        :param text:
+        :param topN:
+        :return:
+        """
+        if len(self._vocab) == 0:
+            raise Exception('vocab is None')
+        words = self.cut_use_stopwords(text, top_k).split(' ')
+        ids = [self._vocab_ix.get(word, self._vocab_ix.get(self.unknown_token)) for word in words]
+        return ids
 
     def cut_use_stopwords_vocab(self, text, top_k=None):
         """
@@ -121,23 +162,12 @@ class WordUtil(object):
         :param text:
         :return: str
         """
+        if len(self._vocab) == 0:
+            raise Exception('vocab is None')
         if text is not '':
-            words = self.cut_use_stopwords(text.lower())
-            if len(self._vocab) == 0:
-                if top_k is not None:
-                    words = words.split(' ')[:top_k]
-                    while len(words) < top_k:
-                        words.append('<pad>')
-                    return ' '.join(words)
-                return words
             words_result = []
-            for x in words.split(' '):
-                if self._vocab.__contains__(x):
-                    words_result.append(x)
-            if top_k is not None:
-                while len(words_result) < top_k:
-                    words_result.append('<pad>')
-                return ' '.join(words_result[:top_k])
+            for word in self.cut_use_stopwords(text.lower(), top_k).split(' '):
+                words_result.append(self.vocab.get(word, self.unknown_token))
             return ' '.join(words_result)
         return ''
 
@@ -147,21 +177,9 @@ class WordUtil(object):
         :param text:
         :return: str
         """
-        words = self.cut_use_stopwords_vocab(text, top_k).split(' ')
         indexes = []
-        for word in words:
+        for word in self.cut_use_stopwords_vocab(text, top_k).split(' '):
             indexes.append(self._vocab_ix.get(word))
-        return indexes
-
-    def cut_words2id_with_tag(self, text, top_k=None):
-        """
-        使用词典和停用词表分词,并转化为id
-        :param text:
-        :return: str
-        """
-        indexes = self.cut_words2id(text, top_k)
-        indexes.insert(0, self._vocab_ix.get('<sos>'))
-        indexes.append(self._vocab_ix.get('<eos>'))
         return indexes
 
     def extract_keywords(self, text, top_k=10):
@@ -170,11 +188,11 @@ class WordUtil(object):
         tfidf算法
         :param text:
         :param top_k:
-        :return: str
+        :return:
         """
         keywords = self._tfidf.extract_tags(self.cut_use_stopwords_vocab(text), topK=top_k)
         while len(keywords) < top_k:
-            keywords.append('<pad>')
+            keywords.append(self.pad_token)
         return ' '.join(keywords)
 
     def extract_keywords2id(self, text, top_k=10):
@@ -184,22 +202,11 @@ class WordUtil(object):
         :param top_k:
         :return: list
         """
+        if len(self._vocab) == 0:
+            raise Exception('vocab is None')
         words = self.extract_keywords(text, top_k).split(' ')
         indexes = []
         for word in words:
-            # len(self.vocab)代表<unknown>标记
-            ix = self._vocab_ix.get(word, len(self.vocab))
+            ix = self._vocab_ix.get(word)
             indexes.append(ix)
-        return indexes
-
-    def extract_keywords2id_with_tag(self, text, top_k=10):
-        """
-        抽取关键词 并将关键词转换为词表中的索引id 并在首尾添加<sos> <eos>
-        :param text:
-        :param top_k:
-        :return: list
-        """
-        indexes = self.extract_keywords2id(text, top_k)
-        indexes.insert(0, self._vocab_ix.get('<sos>'))
-        indexes.append(self._vocab_ix.get('<eos>'))
         return indexes
